@@ -34,7 +34,7 @@ def main():
 
     # Initialize Evaluation Models (The "Judges")
     # Make sure you have GEMINI_API_KEY in your .env file
-    eval_llm = ChatGoogleGenerativeAI(model="models/gemini-2.5-flash") 
+    eval_llm = ChatGoogleGenerativeAI(model="models/gemini-1.5-flash") 
     eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
     ragas_llm = LangchainLLMWrapper(eval_llm)

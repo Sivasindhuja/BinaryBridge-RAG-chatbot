@@ -14,7 +14,7 @@ load_dotenv()
 # -------------------------------
 # TASK 1: INGESTION
 # -------------------------------
-def load_documents(directory_path: str):
+def load_documents(directory_path: str): 
     loader = DirectoryLoader(
         directory_path,
         glob="*.md",

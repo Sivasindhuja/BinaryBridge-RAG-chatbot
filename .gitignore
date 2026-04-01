@@ -1,2 +1,7 @@
 desktop.ini
 .env
+venv/
+chroma_db
+__pycache__
+error.log
+error2.log

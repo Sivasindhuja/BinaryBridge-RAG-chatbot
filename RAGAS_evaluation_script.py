@@ -25,7 +25,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 
 def main():
     # 1. Setup & Authentication
-    print(" Initializing Binary Bridge Evaluation Script...")
+    print(" Initializing Binar Bridge Evaluation Script...")
     load_dotenv()
     
     student_name = input("Enter your First and Last Name (for the report): ").strip().replace(" ", "-")
@@ -34,7 +34,7 @@ def main():
 
     # Initialize Evaluation Models (The "Judges")
     # Make sure you have GEMINI_API_KEY in your .env file
-    eval_llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash") 
+    eval_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash") 
     eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
     ragas_llm = LangchainLLMWrapper(eval_llm)

@@ -1,0 +1,23 @@
+# Core RAG dependencies
+python-dotenv>=1.0.0
+google-generativeai>=0.8.6
+
+# LangChain ecosystem
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-google-genai>=2.0.0
+langchain-huggingface>=0.1.0
+
+# Semantic embeddings
+sentence-transformers>=2.6.0
+torch>=2.0.0
+transformers>=4.40.0
+huggingface_hub>=0.23.0
+
+# Optional: vector DB (uncomment if using ChromaDB)
+# chromadb>=1.5.5
+
+# Evaluation stack
+pandas>=2.2.0
+datasets>=2.20.0
+ragas>=0.2.0

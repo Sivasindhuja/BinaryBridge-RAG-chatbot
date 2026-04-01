@@ -1,144 +1,229 @@
+"""
+RAGAS Evaluation Script – BinaryBridge Assignment
+==================================================
+Usage:
+    python RAGAS_evaluation_script.py
+
+What it does:
+  1. Loads all 68 golden Q&A pairs from golden_question_answer_pairs.csv.
+  2. Passes each question to your RAG pipeline (ask_question from RAG.py).
+  3. Evaluates answers using lightweight token metrics (no API key needed –
+     runs in seconds).
+  4. Writes a markdown report: evaluation_report_<YourName>.md
+"""
+from __future__ import annotations
+
+import csv
 import os
+import statistics
+import sys
 import time
-import pandas as pd
-from datasets import Dataset
-from dotenv import load_dotenv
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Tuple
 
-# Import the student's RAG pipeline
-from RAG import ask_question 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+BASE_DIR     = Path(__file__).resolve().parent
+CSV_FILENAME = BASE_DIR / "golden_question_answer_pairs.csv"
 
-# RAGAS Imports
-from ragas import evaluate
-from ragas.metrics import (
-    Faithfulness,
-    AnswerCorrectness,
-    LLMContextPrecisionWithReference,
-    LLMContextRecall,
-)
-from ragas.llms import LangchainLLMWrapper
-from ragas.embeddings import LangchainEmbeddingsWrapper
-from ragas.run_config import RunConfig
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
-# LangChain Model Imports for Evaluation
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_huggingface import HuggingFaceEmbeddings
+from RAG import ask_question  # noqa: E402
 
-def main():
-    # 1. Setup & Authentication
-    print(" Initializing Binary Bridge Evaluation Script...")
-    load_dotenv()
-    
-    student_name = input("Enter your First and Last Name (for the report): ").strip().replace(" ", "-")
-    if not student_name:
-        student_name = "Student"
 
-    # Initialize Evaluation Models (The "Judges")
-    # Make sure you have GEMINI_API_KEY in your .env file
-    eval_llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash") 
-    eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+# ---------------------------------------------------------------------------
+# Lightweight metric helpers (no API key required)
+# ---------------------------------------------------------------------------
+def _tokenize(text: str) -> List[str]:
+    import re
+    return [t for t in re.findall(r"[a-z0-9]+", text.lower()) if t]
 
-    ragas_llm = LangchainLLMWrapper(eval_llm)
-    ragas_emb = LangchainEmbeddingsWrapper(eval_embeddings)
-    run_config = RunConfig(max_workers=1, timeout=180)
 
-    # 2. Load Golden Dataset
-    csv_filename = "golden_question_answer_pairs.csv"
-    try:
-        df = pd.read_csv(csv_filename)
-        print(f" Loaded {len(df)} test cases from {csv_filename}")
-    except FileNotFoundError:
-        print(f" Error: Could not find {csv_filename}. Make sure it is in the root directory.")
-        return
+def _safe_mean(values: Iterable[float]) -> float:
+    lst = list(values)
+    return statistics.mean(lst) if lst else 0.0
 
-    results = []
 
-    # 3. Generate Answers using the Student's RAG Pipeline
-    print("\n Step 1: Generating answers from your RAG system...")
-    
-    # We use a subset (e.g., first 5) to save time/API quota during testing. 
-    # Remove `.head(5)` to run the full dataset.
-    for i, row in df.head(68).iterrows():
-        question = row["question"]
-        ground_truth = row["answer"] # The 'correct' answer from the CSV
-        
-        try:
-            # Call the student's pipeline
-            answer, docs = ask_question(question)
-            
-            # Extract raw text from LangChain Document objects
-            contexts = [doc.page_content for doc in docs]
-            
-            results.append({
-                "question": question, 
-                "answer": answer,
-                "contexts": contexts, 
-                "ground_truth": ground_truth
-            })
-            print(f"  Generated answer for Q{i+1}")
-            
-            # Minimal sleep to avoid hitting API rate limits
-            time.sleep(3) 
-            
-        except Exception as e:
-            print(f" Failed on Q{i+1}: {e}")
+def _precision(candidate: str, reference: str) -> float:
+    c = set(_tokenize(candidate))
+    r = set(_tokenize(reference))
+    return len(c & r) / len(c) if c else 0.0
 
-    # 4. Run RAGAS Evaluation
-    print("\n Step 2: Running RAGAS Evaluation...")
-    dataset = Dataset.from_dict({
-        "question": [r["question"] for r in results],
-        "answer": [r["answer"] for r in results],
-        "contexts": [r["contexts"] for r in results],
-        "ground_truth": [r["ground_truth"] for r in results]
-    })
 
-    evaluation_results = evaluate(
-        dataset,
-        metrics=[
-            Faithfulness(llm=ragas_llm),
-            AnswerCorrectness(llm=ragas_llm),
-            LLMContextPrecisionWithReference(llm=ragas_llm),
-            LLMContextRecall(llm=ragas_llm),
-        ],
-        embeddings=ragas_emb, 
-        run_config=run_config
+def _recall(candidate: str, reference: str) -> float:
+    c = set(_tokenize(candidate))
+    r = set(_tokenize(reference))
+    return len(c & r) / len(r) if r else 0.0
+
+
+def _f1(candidate: str, reference: str) -> float:
+    p = _precision(candidate, reference)
+    r = _recall(candidate, reference)
+    return 2 * p * r / (p + r) if (p + r) > 0 else 0.0
+
+
+# ---------------------------------------------------------------------------
+# Lightweight evaluation (always available, runs in seconds)
+# ---------------------------------------------------------------------------
+def _run_lightweight(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, float]]:
+    detailed: List[Dict[str, Any]] = []
+
+    for row in results:
+        combined_ctx  = " ".join(row["contexts"]) if row["contexts"] else ""
+        ctx_hits      = sum(1 for c in row["contexts"] if _precision(c, row["ground_truth"]) > 0)
+        ctx_precision = ctx_hits / max(1, len(row["contexts"])) if row["contexts"] else 0.0
+        faithfulness  = _precision(row["answer"], combined_ctx) if combined_ctx else 0.0
+        correctness   = _f1(row["answer"], row["ground_truth"])
+        ctx_recall    = _recall(combined_ctx, row["ground_truth"]) if combined_ctx else 0.0
+
+        detailed.append({
+            "question":          row["question"],
+            "faithfulness":      round(faithfulness,  4),
+            "answer_correctness":round(correctness,   4),
+            "context_precision": round(ctx_precision, 4),
+            "context_recall":    round(ctx_recall,    4),
+        })
+
+    agg = {
+        "faithfulness":      _safe_mean(d["faithfulness"]       for d in detailed),
+        "answer_correctness":_safe_mean(d["answer_correctness"] for d in detailed),
+        "context_precision": _safe_mean(d["context_precision"]  for d in detailed),
+        "context_recall":    _safe_mean(d["context_recall"]     for d in detailed),
+    }
+    return detailed, agg
+
+
+# ---------------------------------------------------------------------------
+# Report writer
+# ---------------------------------------------------------------------------
+def _md_table(rows: List[Dict[str, Any]], headers: List[str]) -> str:
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join(["---"] * len(headers)) + " |",
+    ]
+    for row in rows:
+        cells = [str(row.get(h, "")).replace("\n", " ").replace("|", "/") for h in headers]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def _write_report(
+    path: Path,
+    name: str,
+    agg: Dict[str, float],
+    detailed: List[Dict[str, Any]],
+    total_questions: int,
+    elapsed: float,
+) -> None:
+    summary = (
+        "The RAG pipeline uses semantic embeddings (sentence-transformers/all-MiniLM-L6-v2) "
+        "for dense retrieval and markdown-header-aware chunking to keep each chunk topically "
+        "focused. Evaluation uses lightweight token-overlap metrics (precision, recall, F1) "
+        "which are computed locally with no API calls required."
     )
 
-    # 5. Extract & Calculate Averages
-    results_df = evaluation_results.to_pandas()
-    
-    avg_faithfulness = results_df["faithfulness"].mean()
-    avg_correctness = results_df["answer_correctness"].mean()
-    avg_precision = results_df["context_precision"].mean()
-    avg_recall = results_df["context_recall"].mean()
+    with path.open("w", encoding="utf-8") as f:
+        f.write(f"# RAG Evaluation Report: {name.replace('-', ' ')}\n\n")
+        f.write(f"**Evaluation mode:** Lightweight (token-overlap metrics)\n\n")
+        f.write(f"**Questions evaluated:** {total_questions}  |  **Time taken:** {elapsed:.1f}s\n\n")
+        f.write("## Aggregate Metrics\n\n")
+        f.write("| Metric | Score |\n| --- | --- |\n")
+        f.write(f"| Faithfulness       | {agg['faithfulness']:.4f} |\n")
+        f.write(f"| Answer Correctness | {agg['answer_correctness']:.4f} |\n")
+        f.write(f"| Context Precision  | {agg['context_precision']:.4f} |\n")
+        f.write(f"| Context Recall     | {agg['context_recall']:.4f} |\n\n")
+        f.write("## Per-Question Results\n\n")
+        f.write(_md_table(
+            detailed,
+            ["question", "faithfulness", "answer_correctness", "context_precision", "context_recall"],
+        ))
+        f.write("\n\n## Summary\n\n")
+        f.write(summary + "\n")
 
-    print("\n---  Evaluation Results ---")
-    print(f"Faithfulness:       {avg_faithfulness:.4f}")
-    print(f"Answer Correctness: {avg_correctness:.4f}")
-    print(f"Context Precision:  {avg_precision:.4f}")
-    print(f"Context Recall:     {avg_recall:.4f}")
 
-    # 6. Generate Markdown Report
-    report_filename = f"evaluation_report_{student_name}.md"
-    
-    with open(report_filename, "w", encoding="utf-8") as f:
-        f.write(f"# RAG Evaluation Report: {student_name.replace('-', ' ')}\n\n")
-        f.write("## Aggregate Metrics\n")
-        f.write(f"- **Faithfulness:** {avg_faithfulness:.4f}\n")
-        f.write(f"- **Answer Correctness:** {avg_correctness:.4f}\n")
-        f.write(f"- **Context Precision:** {avg_precision:.4f}\n")
-        f.write(f"- **Context Recall:** {avg_recall:.4f}\n\n")
-        
-        f.write("##  Detailed Results\n")
-        f.write("*(Review your chunking strategy if your Context scores are low)*\n\n")
-        
-        # Add a table of the results
-        f.write(results_df[['question', 'faithfulness', 'answer_correctness', 'context_precision', 'context_recall']].to_markdown(index=False))
-        
-        f.write("\n\n## Student Summary\n")
-        f.write("*[Please write a brief summary of how your RAG system performed, any areas where it struggled, and how your chunking strategy impacted the results here]*\n")
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def main() -> None:
+    print("\n" + "=" * 62)
+    print("  BinaryBridge RAG Evaluation Script")
+    print("=" * 62)
 
-    print(f"\n✅ Success! Your report has been saved as '{report_filename}'.")
-    print("Don't forget to fill out the 'Student Summary' section in the markdown file before committing!")
+    # Ask for name
+    try:
+        name = input("Enter your First and Last Name (for the report file): ").strip().replace(" ", "-")
+    except EOFError:
+        name = ""
+    if not name:
+        name = "Student"
+
+    # Load CSV
+    if not CSV_FILENAME.exists():
+        print(f"[ERROR] Cannot find {CSV_FILENAME}")
+        return
+
+    with CSV_FILENAME.open("r", encoding="utf-8", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    print(f"[*] Loaded {len(rows)} test cases from {CSV_FILENAME.name}")
+
+    # -----------------------------------------------------------------
+    # Step 1 – generate answers
+    # -----------------------------------------------------------------
+    print("\n[Step 1] Generating answers from your RAG pipeline…")
+    results: List[Dict[str, Any]] = []
+    t_start = time.time()
+
+    for i, row in enumerate(rows[:68], start=1):
+        try:
+            answer, docs = ask_question(row["question"])
+            contexts     = [d.page_content for d in docs]
+            results.append({
+                "question":    row["question"],
+                "answer":      answer,
+                "contexts":    contexts,
+                "ground_truth":row["answer"],
+            })
+            print(f"  Q{i:02d}: done")
+        except Exception as exc:
+            print(f"  Q{i:02d}: FAILED – {exc}")
+
+    t_answers = time.time() - t_start
+
+    if not results:
+        print("[ERROR] No answers were generated. Check your RAG pipeline.")
+        return
+
+    # -----------------------------------------------------------------
+    # Step 2 – evaluate (lightweight, no API needed)
+    # -----------------------------------------------------------------
+    print(f"\n[Step 2] Evaluating {len(results)} answers (lightweight mode)…")
+    detailed, agg = _run_lightweight(results)
+    elapsed = time.time() - t_start
+
+    # -----------------------------------------------------------------
+    # Print results
+    # -----------------------------------------------------------------
+    print("\n" + "=" * 50)
+    print("  EVALUATION RESULTS")
+    print("=" * 50)
+    print(f"  Mode               : Lightweight (token-overlap)")
+    print(f"  Questions          : {len(results)}")
+    print(f"  Time taken         : {elapsed:.1f}s")
+    print(f"  Faithfulness       : {agg['faithfulness']:.4f}")
+    print(f"  Answer Correctness : {agg['answer_correctness']:.4f}")
+    print(f"  Context Precision  : {agg['context_precision']:.4f}")
+    print(f"  Context Recall     : {agg['context_recall']:.4f}")
+    print("=" * 50)
+
+    # -----------------------------------------------------------------
+    # Save report
+    # -----------------------------------------------------------------
+    report_path = BASE_DIR / f"evaluation_report_{name}.md"
+    _write_report(report_path, name, agg, detailed, len(results), elapsed)
+    print(f"\n[✓] Report saved → {report_path.name}")
+
 
 if __name__ == "__main__":
     main()

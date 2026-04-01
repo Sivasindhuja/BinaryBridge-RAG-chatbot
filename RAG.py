@@ -11,7 +11,7 @@ How it works:
                 the library is missing – so the script always runs.
   4. Retrieve : Cosine-similarity in an in-memory vector store; retrieves top-5
                 most relevant chunks for each query.
-  5. Generate : Passes retrieved context + query to Gemini (gemini-1.5-flash).
+  5. Generate : Passes retrieved context + query to Gemini (gemini-2.0-flash).
                 If no valid API key is present, uses extractive QA (picks the
                 best-matching sentences from retrieved chunks) as a fallback.
 
@@ -37,11 +37,12 @@ BASE_DIR = Path(__file__).resolve().parent
 DOCS_DIR = BASE_DIR / "Documents"
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
-CHUNK_SIZE     = 600   # max characters per chunk
-CHUNK_OVERLAP  = 100   # overlap characters between adjacent sliding-window chunks
-TOP_K          = 5     # chunks retrieved per query
-EMBED_MODEL    = "sentence-transformers/all-MiniLM-L6-v2"
-GEMINI_MODEL   = "gemini-1.5-flash"
+CHUNK_SIZE        = 600   # max characters per chunk
+CHUNK_OVERLAP     = 100   # overlap characters between adjacent sliding-window chunks
+TOP_K             = 5     # chunks retrieved per query
+MIN_RELEVANCE     = 0.25  # cosine-similarity threshold – below this → "not found"
+EMBED_MODEL       = "sentence-transformers/all-MiniLM-L6-v2"
+GEMINI_MODEL      = "gemini-2.0-flash"
 
 
 # ---------------------------------------------------------------------------
@@ -79,28 +80,20 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
 
 def _strip_markdown(md: str) -> str:
     """Convert markdown to plain readable text."""
-    # Remove fenced code blocks
     text = re.sub(r"```.*?```", " ", md, flags=re.S)
-    # Inline code → plain text
     text = re.sub(r"`([^`]*)`", r"\1", text)
-    # Images → alt text
     text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", text)
-    # Links → label only
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-    # Bare URLs
     text = re.sub(r"https?://\S+", "", text)
-    # HTML tags
     text = re.sub(r"<[^>]+>", " ", text)
-    # Horizontal rules
     text = re.sub(r"^\s*[-*_]{3,}\s*$", "\n", text, flags=re.M)
-    # Table pipes
     text = text.replace("|", " ")
 
     cleaned_lines = []
     for line in text.splitlines():
-        line = re.sub(r"^#{1,6}\s+", "", line)       # headings → plain
-        line = re.sub(r"^\s*[-*+]\s+", "", line)     # bullets
-        line = re.sub(r"^\s*\d+[.)]\s+", "", line)   # numbered lists
+        line = re.sub(r"^#{1,6}\s+", "", line)
+        line = re.sub(r"^\s*[-*+]\s+", "", line)
+        line = re.sub(r"^\s*\d+[.)]\s+", "", line)
         cleaned_lines.append(line.strip())
 
     result = "\n".join(cleaned_lines)
@@ -182,12 +175,12 @@ class GeminiLLM:
             import google.generativeai as genai  # type: ignore
             genai.configure(api_key=api_key)
             self._model  = genai.GenerativeModel(GEMINI_MODEL)
-            # Quick validation ping (catches bad keys immediately)
+            # Quick validation ping
             self._model.generate_content("Hi")
             self.enabled = True
             print(f"[*] LLM      : Gemini {GEMINI_MODEL} ✓")
         except Exception as err:
-            print(f"[!] LLM      : Gemini init failed ({err}) → extractive fallback.")
+            print(f"[!] LLM      : Gemini unavailable ({err.__class__.__name__}) → extractive fallback.")
 
     def generate(self, prompt: str) -> Optional[str]:
         if not self.enabled or self._model is None:
@@ -196,7 +189,7 @@ class GeminiLLM:
             resp = self._model.generate_content(prompt)
             return resp.text.strip() if resp.text else None
         except Exception as err:
-            print(f"[!] LLM generation error: {err}")
+            print(f"[!] LLM generation error: {err.__class__.__name__}")
             return None
 
 
@@ -204,17 +197,8 @@ class GeminiLLM:
 # Chunking  (header-aware + sliding window)
 # ---------------------------------------------------------------------------
 def _chunk_document(raw: str, doc_name: str) -> List[Dict[str, Any]]:
-    """
-    Split a markdown document into chunks:
-      Phase 1 – split on markdown section headers (## / ###).
-                Each section becomes one chunk if it is ≤ CHUNK_SIZE chars.
-      Phase 2 – sections that are too long are further split with a
-                sliding window (stride = CHUNK_SIZE - CHUNK_OVERLAP).
-    """
     chunks: List[Dict[str, Any]] = []
     idx = 0
-
-    # Prepend newline so the first header is also caught by the split regex
     sections = re.split(r"(?=\n#{1,6}\s)", "\n" + raw)
 
     for section in sections:
@@ -226,13 +210,11 @@ def _chunk_document(raw: str, doc_name: str) -> List[Dict[str, Any]]:
             chunks.append(_make_chunk(doc_name, idx, text))
             idx += 1
         else:
-            # Sliding window over characters
             stride = max(1, CHUNK_SIZE - CHUNK_OVERLAP)
             start  = 0
             while start < len(text):
                 end     = start + CHUNK_SIZE
                 snippet = text[start:end].strip()
-                # Avoid cutting mid-word: extend to next space
                 if end < len(text) and text[end] not in (" ", "\n"):
                     space = text.find(" ", end)
                     if space != -1:
@@ -278,13 +260,9 @@ class VectorStore:
 # Extractive fallback answer (when no LLM)
 # ---------------------------------------------------------------------------
 def _extractive_answer(query: str, context_chunks: List[Dict[str, Any]]) -> str:
-    """
-    Without an LLM, find the most relevant sentences from the top chunks
-    using keyword overlap, and return them as the answer.
-    """
     keywords = set(_tokenize(query)) - {"the", "is", "a", "of", "in", "and", "to", "for", "what", "how", "who"}
 
-    best_sents: List[Tuple[int, str]] = []  # (overlap_count, sentence)
+    best_sents: List[Tuple[int, str]] = []
 
     for chunk in context_chunks:
         text  = chunk["text"]
@@ -298,7 +276,6 @@ def _extractive_answer(query: str, context_chunks: List[Dict[str, Any]]) -> str:
                 best_sents.append((overlap, sent))
 
     if best_sents:
-        # Sort by overlap count descending, take top 3 unique sentences
         best_sents.sort(key=lambda x: x[0], reverse=True)
         seen, result = set(), []
         for _, sent in best_sents:
@@ -311,12 +288,7 @@ def _extractive_answer(query: str, context_chunks: List[Dict[str, Any]]) -> str:
         if result:
             return " ".join(result)
 
-    # Last resort: return the first 2 sentences of the top chunk
-    if context_chunks:
-        sents = re.split(r"(?<=[.?!])\s+", context_chunks[0]["text"])
-        return " ".join(sents[:2]).strip() or context_chunks[0]["text"][:300]
-
-    return "I cannot find this information in the provided documents."
+    return "NOT_FOUND"
 
 
 # ---------------------------------------------------------------------------
@@ -330,9 +302,6 @@ class RAGPipeline:
         self.store     = VectorStore()
         self.documents: List[Dict[str, Any]] = []
 
-    # ------------------------------------------------------------------
-    # Build index
-    # ------------------------------------------------------------------
     def build_pipeline(self) -> None:
         md_files = sorted(DOCS_DIR.glob("*.md"))
         if not md_files:
@@ -350,24 +319,31 @@ class RAGPipeline:
             print(f"    {fp.name:40s}  →  {len(chunks):3d} chunks")
 
         print(f"[*] Total    : {len(all_chunks)} chunks")
-        print("[*] Embedding  (first run downloads ~90 MB model – please wait)…")
+        print("[*] Embedding (please wait)…")
         embs = self.embedder.encode(c["text"] for c in all_chunks)
         self.store.add(all_chunks, embs)
         print("[*] Index ready.\n")
 
-    # ------------------------------------------------------------------
-    # Answer a query
-    # ------------------------------------------------------------------
     def answer_query(self, query: str) -> Dict[str, Any]:
         if not self.store.chunks:
             return {
                 "query":             query,
                 "answer":            "No documents indexed. Run build_pipeline() first.",
                 "retrieved_context": [],
+                "found":             False,
             }
 
         q_emb   = self.embedder.encode([query])[0]
         results = self.store.search(q_emb, k=TOP_K)
+
+        best_score = results[0][0] if results else 0.0
+        if best_score < MIN_RELEVANCE:
+            return {
+                "query":             query,
+                "answer":            "❌  This question is not covered in the available documents.",
+                "retrieved_context": [],
+                "found":             False,
+            }
 
         context = [
             {
@@ -400,10 +376,20 @@ class RAGPipeline:
         if not answer:
             answer = _extractive_answer(query, context)
 
+        # If extractive returned NOT_FOUND sentinel
+        if answer == "NOT_FOUND":
+            return {
+                "query":             query,
+                "answer":            "❌  This question is not covered in the available documents.",
+                "retrieved_context": context,
+                "found":             False,
+            }
+
         return {
             "query":             query,
             "answer":            answer,
             "retrieved_context": context,
+            "found":             True,
         }
 
 
@@ -425,23 +411,29 @@ def ask_question(query: str) -> Tuple[str, List[RetrievedDocument]]:
     """Entry-point used by RAGAS_evaluation_script.py."""
     result = get_pipeline().answer_query(query)
     docs   = [RetrievedDocument(c["text"], c["metadata"]) for c in result["retrieved_context"]]
-    return result["answer"], docs
+    # For evaluation, return the raw answer (not the "not found" UI message)
+    answer = result["answer"]
+    if not result.get("found") and not result["retrieved_context"]:
+        answer = "I cannot find this information in the provided documents."
+    return answer, docs
 
 
 # ---------------------------------------------------------------------------
 # Interactive chatbot  (python RAG.py)
 # ---------------------------------------------------------------------------
 def main() -> None:
+    print("\n" + "=" * 62)
+    print("   PMKVY SCHEME Q&A ASSISTANT  –  BinaryBridge RAG")
+    print("=" * 62)
+    print("  Type your question and press Enter.")
+    print("  Type 'exit' or 'quit' to stop.")
+    print("=" * 62 + "\n")
+
     pipeline = get_pipeline()
 
-    print("=" * 60)
-    print("  PMKVY SCHEME Q&A ASSISTANT  –  BinaryBridge RAG")
-    print("=" * 60)
-    print(f"Documents indexed : {len(pipeline.documents)}")
-    print(f"Total chunks      : {len(pipeline.store.chunks)}")
-    print(f"LLM status        : {'Gemini online' if pipeline.llm.enabled else 'Offline – using extractive QA'}")
-    print("Type your question and press Enter.  Type 'exit' to quit.")
-    print("=" * 60 + "\n")
+    llm_status = f"Gemini ({GEMINI_MODEL})" if pipeline.llm.enabled else "Extractive QA (offline)"
+    print(f"  Documents : {len(pipeline.documents)} loaded  |  Chunks : {len(pipeline.store.chunks)}  |  LLM : {llm_status}")
+    print("-" * 62 + "\n")
 
     while True:
         try:
@@ -459,8 +451,14 @@ def main() -> None:
         result  = pipeline.answer_query(user_input)
         sources = sorted({c["metadata"]["document_name"] for c in result["retrieved_context"]})
 
-        print(f"\nAssistant: {result['answer']}")
-        print(f"Sources  : {', '.join(sources)}\n")
+        print()
+        if result.get("found"):
+            print(f"  ✅ Answer  : {result['answer']}")
+            if sources:
+                print(f"  📄 Source  : {', '.join(sources)}")
+        else:
+            print(f"  {result['answer']}")
+        print()
 
 
 if __name__ == "__main__":

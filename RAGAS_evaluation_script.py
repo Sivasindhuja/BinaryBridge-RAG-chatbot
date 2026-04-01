@@ -7,9 +7,8 @@ Usage:
 What it does:
   1. Loads all 68 golden Q&A pairs from golden_question_answer_pairs.csv.
   2. Passes each question to your RAG pipeline (ask_question from RAG.py).
-  3. Evaluates answers using either:
-       - Full RAGAS (LLM-graded)   — if a valid GEMINI_API_KEY is set
-       - Lightweight token metrics — fallback (always works, no API key needed)
+  3. Evaluates answers using lightweight token metrics (no API key needed –
+     runs in seconds).
   4. Writes a markdown report: evaluation_report_<YourName>.md
 """
 from __future__ import annotations
@@ -28,11 +27,10 @@ from typing import Any, Dict, Iterable, List, Tuple
 BASE_DIR     = Path(__file__).resolve().parent
 CSV_FILENAME = BASE_DIR / "golden_question_answer_pairs.csv"
 
-# Make sure RAG.py can be imported
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from RAG import ask_question  # noqa: E402  (import after sys.path fix)
+from RAG import ask_question  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -67,18 +65,18 @@ def _f1(candidate: str, reference: str) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Lightweight evaluation (always available)
+# Lightweight evaluation (always available, runs in seconds)
 # ---------------------------------------------------------------------------
 def _run_lightweight(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, float]]:
     detailed: List[Dict[str, Any]] = []
 
     for row in results:
-        combined_ctx  = " ".join(row["contexts"])
+        combined_ctx  = " ".join(row["contexts"]) if row["contexts"] else ""
         ctx_hits      = sum(1 for c in row["contexts"] if _precision(c, row["ground_truth"]) > 0)
-        ctx_precision = ctx_hits / max(1, len(row["contexts"]))
-        faithfulness  = _precision(row["answer"], combined_ctx)
+        ctx_precision = ctx_hits / max(1, len(row["contexts"])) if row["contexts"] else 0.0
+        faithfulness  = _precision(row["answer"], combined_ctx) if combined_ctx else 0.0
         correctness   = _f1(row["answer"], row["ground_truth"])
-        ctx_recall    = _recall(combined_ctx, row["ground_truth"])
+        ctx_recall    = _recall(combined_ctx, row["ground_truth"]) if combined_ctx else 0.0
 
         detailed.append({
             "question":          row["question"],
@@ -98,64 +96,6 @@ def _run_lightweight(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# Full RAGAS evaluation (requires valid GEMINI_API_KEY)
-# ---------------------------------------------------------------------------
-def _run_ragas(results: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, float], str]:
-    import pandas as pd                                                      # type: ignore
-    from datasets import Dataset                                             # type: ignore
-    from ragas import evaluate                                               # type: ignore
-    from ragas.embeddings import LangchainEmbeddingsWrapper                 # type: ignore
-    from ragas.llms import LangchainLLMWrapper                              # type: ignore
-    from ragas.metrics import (                                              # type: ignore
-        AnswerCorrectness,
-        Faithfulness,
-        LLMContextPrecisionWithReference,
-        LLMContextRecall,
-    )
-    from ragas.run_config import RunConfig                                   # type: ignore
-    from langchain_google_genai import ChatGoogleGenerativeAI               # type: ignore
-    from langchain_huggingface import HuggingFaceEmbeddings                 # type: ignore
-
-    print("[*] Initialising RAGAS evaluation stack…")
-    eval_llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash")
-    eval_emb = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
-    ragas_llm = LangchainLLMWrapper(eval_llm)
-    ragas_emb = LangchainEmbeddingsWrapper(eval_emb)
-    cfg       = RunConfig(max_workers=1, timeout=180)
-
-    dataset = Dataset.from_dict({
-        "question":    [r["question"]    for r in results],
-        "answer":      [r["answer"]      for r in results],
-        "contexts":    [r["contexts"]    for r in results],
-        "ground_truth":[r["ground_truth"] for r in results],
-    })
-
-    eval_results = evaluate(
-        dataset,
-        metrics=[
-            Faithfulness(llm=ragas_llm),
-            AnswerCorrectness(llm=ragas_llm),
-            LLMContextPrecisionWithReference(llm=ragas_llm),
-            LLMContextRecall(llm=ragas_llm),
-        ],
-        embeddings=ragas_emb,
-        run_config=cfg,
-    )
-
-    df = eval_results.to_pandas()
-    detailed = df[["question", "faithfulness", "answer_correctness",
-                   "context_precision", "context_recall"]].to_dict(orient="records")
-    agg = {
-        "faithfulness":      float(pd.to_numeric(df["faithfulness"],       errors="coerce").mean()),
-        "answer_correctness":float(pd.to_numeric(df["answer_correctness"], errors="coerce").mean()),
-        "context_precision": float(pd.to_numeric(df["context_precision"],  errors="coerce").mean()),
-        "context_recall":    float(pd.to_numeric(df["context_recall"],     errors="coerce").mean()),
-    }
-    return detailed, agg, "ragas"
-
-
-# ---------------------------------------------------------------------------
 # Report writer
 # ---------------------------------------------------------------------------
 def _md_table(rows: List[Dict[str, Any]], headers: List[str]) -> str:
@@ -172,23 +112,24 @@ def _md_table(rows: List[Dict[str, Any]], headers: List[str]) -> str:
 def _write_report(
     path: Path,
     name: str,
-    mode: str,
     agg: Dict[str, float],
     detailed: List[Dict[str, Any]],
+    total_questions: int,
+    elapsed: float,
 ) -> None:
     summary = (
         "The RAG pipeline uses semantic embeddings (sentence-transformers/all-MiniLM-L6-v2) "
         "for dense retrieval and markdown-header-aware chunking to keep each chunk topically "
-        "focused. Retrieval quality is strong for direct factual questions. "
-        "Answer correctness depends on whether Gemini LLM is available: when online, answers "
-        "are generated from context; when offline, the system uses extractive sentence matching."
+        "focused. Evaluation uses lightweight token-overlap metrics (precision, recall, F1) "
+        "which are computed locally with no API calls required."
     )
 
     with path.open("w", encoding="utf-8") as f:
         f.write(f"# RAG Evaluation Report: {name.replace('-', ' ')}\n\n")
-        f.write(f"**Evaluation mode:** {mode}\n\n")
+        f.write(f"**Evaluation mode:** Lightweight (token-overlap metrics)\n\n")
+        f.write(f"**Questions evaluated:** {total_questions}  |  **Time taken:** {elapsed:.1f}s\n\n")
         f.write("## Aggregate Metrics\n\n")
-        f.write(f"| Metric | Score |\n| --- | --- |\n")
+        f.write("| Metric | Score |\n| --- | --- |\n")
         f.write(f"| Faithfulness       | {agg['faithfulness']:.4f} |\n")
         f.write(f"| Answer Correctness | {agg['answer_correctness']:.4f} |\n")
         f.write(f"| Context Precision  | {agg['context_precision']:.4f} |\n")
@@ -206,9 +147,9 @@ def _write_report(
 # Main
 # ---------------------------------------------------------------------------
 def main() -> None:
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 62)
     print("  BinaryBridge RAG Evaluation Script")
-    print("=" * 60)
+    print("=" * 62)
 
     # Ask for name
     try:
@@ -232,6 +173,7 @@ def main() -> None:
     # -----------------------------------------------------------------
     print("\n[Step 1] Generating answers from your RAG pipeline…")
     results: List[Dict[str, Any]] = []
+    t_start = time.time()
 
     for i, row in enumerate(rows[:68], start=1):
         try:
@@ -244,60 +186,43 @@ def main() -> None:
                 "ground_truth":row["answer"],
             })
             print(f"  Q{i:02d}: done")
-            time.sleep(0.03)
         except Exception as exc:
             print(f"  Q{i:02d}: FAILED – {exc}")
+
+    t_answers = time.time() - t_start
 
     if not results:
         print("[ERROR] No answers were generated. Check your RAG pipeline.")
         return
 
     # -----------------------------------------------------------------
-    # Step 2 – evaluate
+    # Step 2 – evaluate (lightweight, no API needed)
     # -----------------------------------------------------------------
-    print(f"\n[Step 2] Evaluating {len(results)} answers…")
-
-    mode = "lightweight"
-    detailed: List[Dict[str, Any]]
-    agg:      Dict[str, float]
-
-    gemini_key = os.getenv("GEMINI_API_KEY", "")
-    # Only attempt full RAGAS if the key looks like a real Google key
-    looks_real = bool(gemini_key) and "1234567890" not in gemini_key and len(gemini_key) > 30
-
-    if looks_real:
-        try:
-            detailed, agg, mode = _run_ragas(results)
-            print("[*] Full RAGAS evaluation complete.")
-        except Exception as exc:
-            print(f"[!] RAGAS failed ({exc}) – falling back to lightweight evaluation.")
-            detailed, agg = _run_lightweight(results)
-    else:
-        if gemini_key and not looks_real:
-            print("[!] GEMINI_API_KEY looks like a placeholder – skipping RAGAS, using lightweight.")
-        else:
-            print("[!] No GEMINI_API_KEY set – using lightweight evaluation.")
-        detailed, agg = _run_lightweight(results)
+    print(f"\n[Step 2] Evaluating {len(results)} answers (lightweight mode)…")
+    detailed, agg = _run_lightweight(results)
+    elapsed = time.time() - t_start
 
     # -----------------------------------------------------------------
     # Print results
     # -----------------------------------------------------------------
-    print("\n" + "=" * 40)
+    print("\n" + "=" * 50)
     print("  EVALUATION RESULTS")
-    print("=" * 40)
-    print(f"  Mode               : {mode}")
+    print("=" * 50)
+    print(f"  Mode               : Lightweight (token-overlap)")
+    print(f"  Questions          : {len(results)}")
+    print(f"  Time taken         : {elapsed:.1f}s")
     print(f"  Faithfulness       : {agg['faithfulness']:.4f}")
     print(f"  Answer Correctness : {agg['answer_correctness']:.4f}")
     print(f"  Context Precision  : {agg['context_precision']:.4f}")
     print(f"  Context Recall     : {agg['context_recall']:.4f}")
-    print("=" * 40)
+    print("=" * 50)
 
     # -----------------------------------------------------------------
     # Save report
     # -----------------------------------------------------------------
     report_path = BASE_DIR / f"evaluation_report_{name}.md"
-    _write_report(report_path, name, mode, agg, detailed)
-    print(f"\n[✓] Report saved: {report_path.name}")
+    _write_report(report_path, name, agg, detailed, len(results), elapsed)
+    print(f"\n[✓] Report saved → {report_path.name}")
 
 
 if __name__ == "__main__":

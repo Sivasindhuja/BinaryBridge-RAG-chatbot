@@ -20,7 +20,8 @@ from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.run_config import RunConfig
 
 # LangChain Model Imports for Evaluation
-from langchain_google_genai import ChatGoogleGenerativeAI
+# from langchain_google_genai import ChatGoogleGenerativeAI   # ❌ Old Gemini evaluator (commented)
+from langchain_groq import ChatGroq                          # ✅ New Groq evaluator
 from langchain_huggingface import HuggingFaceEmbeddings
 
 def main():
@@ -33,13 +34,15 @@ def main():
         student_name = "Student"
 
     # Initialize Evaluation Models (The "Judges")
-    # Make sure you have GEMINI_API_KEY in your .env file
-    eval_llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash") 
+    # eval_llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash") 
+    eval_llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0)
     eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
     ragas_llm = LangchainLLMWrapper(eval_llm)
     ragas_emb = LangchainEmbeddingsWrapper(eval_embeddings)
-    run_config = RunConfig(max_workers=1, timeout=180)
+
+    # run_config = RunConfig(max_workers=1, timeout=180)
+    run_config = RunConfig(max_workers=1, timeout=45)
 
     # 2. Load Golden Dataset
     csv_filename = "golden_question_answer_pairs.csv"
@@ -57,7 +60,8 @@ def main():
     
     # We use a subset (e.g., first 5) to save time/API quota during testing. 
     # Remove `.head(5)` to run the full dataset.
-    for i, row in df.head(68).iterrows():
+    # for i, row in df.head(68).iterrows():
+    for i, row in df.head(5).iterrows():
         question = row["question"]
         ground_truth = row["answer"] # The 'correct' answer from the CSV
         
@@ -77,18 +81,19 @@ def main():
             print(f"  Generated answer for Q{i+1}")
             
             # Minimal sleep to avoid hitting API rate limits
-            time.sleep(3) 
+            time.sleep(2) 
             
         except Exception as e:
             print(f" Failed on Q{i+1}: {e}")
 
     # 4. Run RAGAS Evaluation
     print("\n Step 2: Running RAGAS Evaluation...")
+
     dataset = Dataset.from_dict({
-        "question": [r["question"] for r in results],
-        "answer": [r["answer"] for r in results],
-        "contexts": [r["contexts"] for r in results],
-        "ground_truth": [r["ground_truth"] for r in results]
+        "user_input": [r["question"] for r in results],
+        "response": [r["answer"] for r in results],
+        "retrieved_contexts": [r["contexts"] for r in results],
+        "reference": [r["ground_truth"] for r in results]
     })
 
     evaluation_results = evaluate(
@@ -105,10 +110,14 @@ def main():
 
     # 5. Extract & Calculate Averages
     results_df = evaluation_results.to_pandas()
-    
+
+    print("\n---  Raw evaluation rows ---")
+    print(results_df)
+
     avg_faithfulness = results_df["faithfulness"].mean()
     avg_correctness = results_df["answer_correctness"].mean()
-    avg_precision = results_df["context_precision"].mean()
+    # avg_precision = results_df["context_precision"].mean()
+    avg_precision = results_df["llm_context_precision_with_reference"].mean()
     avg_recall = results_df["context_recall"].mean()
 
     print("\n---  Evaluation Results ---")
@@ -128,12 +137,13 @@ def main():
         f.write(f"- **Context Precision:** {avg_precision:.4f}\n")
         f.write(f"- **Context Recall:** {avg_recall:.4f}\n\n")
         
-        f.write("##  Detailed Results\n")
+        f.write("## Detailed Results\n")
         f.write("*(Review your chunking strategy if your Context scores are low)*\n\n")
         
         # Add a table of the results
-        f.write(results_df[['question', 'faithfulness', 'answer_correctness', 'context_precision', 'context_recall']].to_markdown(index=False))
-        
+        # f.write(results_df[['question', 'faithfulness', 'answer_correctness', 'context_precision', 'context_recall']].to_markdown(index=False))
+        f.write(results_df.to_markdown(index=False))
+
         f.write("\n\n## Student Summary\n")
         f.write("*[Please write a brief summary of how your RAG system performed, any areas where it struggled, and how your chunking strategy impacted the results here]*\n")
 

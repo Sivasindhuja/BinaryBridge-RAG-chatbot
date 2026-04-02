@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import pandas as pd
 from datasets import Dataset
@@ -24,22 +25,29 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import HuggingFaceEmbeddings
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)
     # 1. Setup & Authentication
     print(" Initializing Binary Bridge Evaluation Script...")
     load_dotenv()
-    
-    student_name = input("Enter your First and Last Name (for the report): ").strip().replace(" ", "-")
-    if not student_name:
-        student_name = "Student"
+
+    student_name = os.getenv("STUDENT_NAME", "").strip()
+    if not student_name and sys.stdin is not None and sys.stdin.isatty():
+        student_name = input("Enter your First and Last Name (for the report): ").strip().replace(" ", "-")
+    student_name = student_name or "Student"
 
     # Initialize Evaluation Models (The "Judges")
-    # Make sure you have GEMINI_API_KEY in your .env file
-    eval_llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash") 
+    # Same key variables as RAG.py (GOOGLE_API_KEY or GEMINI_API_KEY in .env)
+    _gemini_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    eval_llm = ChatGoogleGenerativeAI(
+        model="gemini-flash-latest",
+        google_api_key=_gemini_key,
+    )
     eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
     ragas_llm = LangchainLLMWrapper(eval_llm)
     ragas_emb = LangchainEmbeddingsWrapper(eval_embeddings)
-    run_config = RunConfig(max_workers=1, timeout=180)
+    run_config = RunConfig(max_workers=1, timeout=600, max_retries=1, max_wait=20)
 
     # 2. Load Golden Dataset
     csv_filename = "golden_question_answer_pairs.csv"
@@ -57,7 +65,8 @@ def main():
     
     # We use a subset (e.g., first 5) to save time/API quota during testing. 
     # Remove `.head(5)` to run the full dataset.
-    for i, row in df.head(68).iterrows():
+    max_cases = int(os.getenv("MAX_TEST_CASES", "68"))
+    for i, row in df.head(max_cases).iterrows():
         question = row["question"]
         ground_truth = row["answer"] # The 'correct' answer from the CSV
         
@@ -100,16 +109,36 @@ def main():
             LLMContextRecall(llm=ragas_llm),
         ],
         embeddings=ragas_emb, 
-        run_config=run_config
+        run_config=run_config,
+        allow_nest_asyncio=False,
     )
 
     # 5. Extract & Calculate Averages
     results_df = evaluation_results.to_pandas()
-    
-    avg_faithfulness = results_df["faithfulness"].mean()
-    avg_correctness = results_df["answer_correctness"].mean()
-    avg_precision = results_df["context_precision"].mean()
-    avg_recall = results_df["context_recall"].mean()
+
+    def mean_or_nan(col: str) -> float:
+        return float(results_df[col].mean()) if col in results_df.columns else float("nan")
+
+    avg_faithfulness = mean_or_nan("faithfulness")
+    avg_correctness = mean_or_nan("answer_correctness")
+
+    precision_col = (
+        "context_precision"
+        if "context_precision" in results_df.columns
+        else "llm_context_precision_with_reference"
+        if "llm_context_precision_with_reference" in results_df.columns
+        else None
+    )
+    recall_col = (
+        "context_recall"
+        if "context_recall" in results_df.columns
+        else "llm_context_recall"
+        if "llm_context_recall" in results_df.columns
+        else None
+    )
+
+    avg_precision = mean_or_nan(precision_col) if precision_col else float("nan")
+    avg_recall = mean_or_nan(recall_col) if recall_col else float("nan")
 
     print("\n---  Evaluation Results ---")
     print(f"Faithfulness:       {avg_faithfulness:.4f}")
@@ -132,12 +161,47 @@ def main():
         f.write("*(Review your chunking strategy if your Context scores are low)*\n\n")
         
         # Add a table of the results
-        f.write(results_df[['question', 'faithfulness', 'answer_correctness', 'context_precision', 'context_recall']].to_markdown(index=False))
+        preferred_question_col = "question" if "question" in results_df.columns else "user_input"
+        table_cols = [preferred_question_col, "faithfulness", "answer_correctness"]
+        if precision_col:
+            table_cols.append(precision_col)
+        if recall_col:
+            table_cols.append(recall_col)
+        table_cols = [c for c in table_cols if c in results_df.columns]
+        f.write(results_df[table_cols].to_markdown(index=False))
         
         f.write("\n\n## Student Summary\n")
         f.write("*[Please write a brief summary of how your RAG system performed, any areas where it struggled, and how your chunking strategy impacted the results here]*\n")
 
-    print(f"\n✅ Success! Your report has been saved as '{report_filename}'.")
+    # Best-effort cleanup to avoid noisy asyncio/SSL shutdown messages.
+    try:
+        import gc
+        import asyncio
+
+        client = getattr(eval_llm, "client", None)
+        aio_client = getattr(client, "aio", None) if client is not None else None
+
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+        if aio_client is not None and hasattr(aio_client, "aclose"):
+            try:
+                asyncio.run(aio_client.aclose())
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                try:
+                    loop.run_until_complete(aio_client.aclose())
+                finally:
+                    loop.close()
+
+        gc.collect()
+    except Exception:
+        pass
+
+    print(f"\n[OK] Success! Your report has been saved as '{report_filename}'.")
     print("Don't forget to fill out the 'Student Summary' section in the markdown file before committing!")
 
 if __name__ == "__main__":

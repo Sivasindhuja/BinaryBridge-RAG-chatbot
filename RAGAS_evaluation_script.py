@@ -20,7 +20,7 @@ from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.run_config import RunConfig
 
 # LangChain Model Imports for Evaluation
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_huggingface import HuggingFaceEmbeddings
 
 def main():
@@ -33,8 +33,14 @@ def main():
         student_name = "Student"
 
     # Initialize Evaluation Models (The "Judges")
-    # Make sure you have GEMINI_API_KEY in your .env file
-    eval_llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash", max_retries=20) 
+    # Make sure you have GROQ_API_KEY in your .env file
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    eval_llm = ChatOpenAI(
+        model="llama-3.3-70b-versatile", 
+        max_retries=20,
+        api_key=groq_key,
+        base_url="https://api.groq.com/openai/v1"
+    )
     eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
     ragas_llm = LangchainLLMWrapper(eval_llm)

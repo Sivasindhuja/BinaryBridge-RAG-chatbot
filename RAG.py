@@ -4,15 +4,16 @@ from dotenv import load_dotenv
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_huggingface import HuggingFaceEmbeddings
 
 # Load environment variables (API Keys)
 load_dotenv()
 
-# LangChain uses GOOGLE_API_KEY by default, but our .env has GEMINI_API_key
-if "GEMINI_API_key" in os.environ and "GOOGLE_API_KEY" not in os.environ:
-    os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_key"]
+# LangChain uses OPENAI_API_KEY for ChatOpenAI by default, we'll set base_url
+groq_key = os.environ.get("GROQ_API_KEY", "")
+if groq_key:
+    os.environ["OPENAI_API_KEY"] = groq_key
 
 # --- TASK 1: INGESTION ---
 def load_documents(directory_path: str):
@@ -105,7 +106,11 @@ def ask_question(question: str):
     docs = retriever.invoke(question)
     
     # 2. Pass the retrieved documents and the question to an LLM to generate an answer.
-    llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash", temperature=0)
+    llm = ChatOpenAI(
+        model="llama-3.3-70b-versatile", 
+        temperature=0,
+        base_url="https://api.groq.com/openai/v1"
+    )
     
     context = "\n\n".join([doc.page_content for doc in docs])
     

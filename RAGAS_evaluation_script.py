@@ -34,12 +34,12 @@ def main():
 
     # Initialize Evaluation Models (The "Judges")
     # Make sure you have GEMINI_API_KEY in your .env file
-    eval_llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash") 
+    eval_llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash", max_retries=20) 
     eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
     ragas_llm = LangchainLLMWrapper(eval_llm)
     ragas_emb = LangchainEmbeddingsWrapper(eval_embeddings)
-    run_config = RunConfig(max_workers=1, timeout=180)
+    run_config = RunConfig(max_workers=1, timeout=180, max_retries=15, max_wait=30)
 
     # 2. Load Golden Dataset
     csv_filename = "golden_question_answer_pairs.csv"
@@ -57,7 +57,7 @@ def main():
     
     # We use a subset (e.g., first 5) to save time/API quota during testing. 
     # Remove `.head(5)` to run the full dataset.
-    for i, row in df.head(68).iterrows():
+    for i, row in df.head(5).iterrows():
         question = row["question"]
         ground_truth = row["answer"] # The 'correct' answer from the CSV
         
@@ -77,7 +77,7 @@ def main():
             print(f"  Generated answer for Q{i+1}")
             
             # Minimal sleep to avoid hitting API rate limits
-            time.sleep(3) 
+            time.sleep(5) 
             
         except Exception as e:
             print(f" Failed on Q{i+1}: {e}")

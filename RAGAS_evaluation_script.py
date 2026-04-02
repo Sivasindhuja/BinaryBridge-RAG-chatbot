@@ -63,7 +63,7 @@ def main():
     
     # We use a subset (e.g., first 5) to save time/API quota during testing. 
     # Remove `.head(5)` to run the full dataset.
-    for i, row in df.head(5).iterrows():
+    for i, row in df.head(20).iterrows():
         question = row["question"]
         ground_truth = row["answer"] # The 'correct' answer from the CSV
         

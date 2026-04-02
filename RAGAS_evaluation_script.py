@@ -110,12 +110,23 @@ def main():
     )
 
     # 5. Extract & Calculate Averages
-    results_df = evaluation_results.to_pandas()
+    # results_df = evaluation_results.to_pandas()
     
+    # avg_faithfulness = results_df["faithfulness"].mean()
+    # avg_correctness = results_df["answer_correctness"].mean()
+    # avg_precision = results_df["context_precision_with_reference"].mean()
+    # avg_recall = results_df["context_recall"].mean()
+
+    results_df = evaluation_results.to_pandas()
+
+    print("Columns:", results_df.columns)  # debug
+
     avg_faithfulness = results_df["faithfulness"].mean()
     avg_correctness = results_df["answer_correctness"].mean()
-    avg_precision = results_df["context_precision"].mean()
-    avg_recall = results_df["context_recall"].mean()
+
+    # safer access
+    avg_precision = results_df.filter(like="precision").mean().values[0]
+    avg_recall = results_df.filter(like="recall").mean().values[0]
 
     print("\n---  Evaluation Results ---")
     print(f"Faithfulness:       {avg_faithfulness:.4f}")

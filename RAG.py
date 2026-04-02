@@ -4,7 +4,8 @@ from dotenv import load_dotenv
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_huggingface import HuggingFaceEmbeddings
 
 # Load environment variables (API Keys)
 load_dotenv()
@@ -66,7 +67,7 @@ def setup_vectorstore(chunks):
     Returns:
         VectorStore: An initialized vector store (e.g., Chroma, FAISS) acting as your retriever.
     """
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     vectorstore = Chroma.from_documents(chunks, embedding=embeddings)
     return vectorstore
 
@@ -104,7 +105,7 @@ def ask_question(question: str):
     docs = retriever.invoke(question)
     
     # 2. Pass the retrieved documents and the question to an LLM to generate an answer.
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+    llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash", temperature=0)
     
     context = "\n\n".join([doc.page_content for doc in docs])
     

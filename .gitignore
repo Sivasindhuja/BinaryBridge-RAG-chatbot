@@ -1,2 +1,7 @@
 desktop.ini
 .env
+.venv/
+__pycache__/
+*.pyc
+chroma_db/
+full_traceback.txt

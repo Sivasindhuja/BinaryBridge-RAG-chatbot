@@ -1,2 +1,5 @@
 desktop.ini
 .env
+venv
+__pycache__/
+chroma_db

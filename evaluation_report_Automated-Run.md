@@ -1,4 +1,4 @@
-# RAG Evaluation Report: Automated Run
+# RAG Evaluation Report: SNEHAAL
 
 ## Aggregate Metrics
 - **Faithfulness:** nan

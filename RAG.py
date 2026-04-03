@@ -1,104 +1,93 @@
 import os
 from dotenv import load_dotenv
-# Hint: Import your necessary LangChain modules here (Text splitters, embeddings, vectorstores, LLMs)
 
-# Load environment variables (API Keys)
+from langchain_community.document_loaders import DirectoryLoader, TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
+
 load_dotenv()
 
-# --- TASK 1: INGESTION ---
-def load_documents(directory_path: str):
-    """
-    Reads all markdown files from the specified directory.
-    
-    Args:
-        directory_path (str): Path to the folder containing .md files (e.g., "Documents/")
-        
-    Returns:
-        List[Document]: A list of loaded LangChain Document objects.
-    """
-    # TODO: Implement document loading logic here
-    pass
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+if not GOOGLE_API_KEY:
+    raise ValueError("❌ GOOGLE_API_KEY or GEMINI_API_KEY must be set in your .env file!")
 
-
-# --- TASK 2: CHUNKING ---
-def chunk_documents(documents):
-    """
-    Splits the loaded documents into smaller, manageable chunks.
-    Experiment with different chunk sizes and overlaps!
-    
-    Args:
-        documents (List[Document]): The list of loaded documents.
-        
-    Returns:
-        List[Document]: A list of chunked Document objects.
-    """
-    # TODO: Implement your text splitting logic here
-    pass
-
-
-# --- TASK 3: VECTOR DATABASE ---
-def setup_vectorstore(chunks):
-    """
-    Embeds the document chunks and stores them in a vector database.
-    
-    Args:
-        chunks (List[Document]): The chunked documents.
-        
-    Returns:
-        VectorStore: An initialized vector store (e.g., Chroma, FAISS) acting as your retriever.
-    """
-    # TODO: Implement embedding and vector store initialization here
-    pass
-
-
-# --- PIPELINE INITIALIZATION ---
-# We initialize the system once when the script loads so it doesn't re-ingest 
-# the documents every time a new question is asked.
 DOCS_DIR = "Documents"
 
-# Uncomment these lines once you have implemented the functions above!
-# raw_docs = load_documents(DOCS_DIR)
-# doc_chunks = chunk_documents(raw_docs)
-# vectorstore = setup_vectorstore(doc_chunks)
+# --- Load documents ---
+def load_documents(directory_path):
+    loader = DirectoryLoader(
+        directory_path,
+        glob="**/*.md",
+        loader_cls=TextLoader,
+        loader_kwargs={"encoding": "utf-8"}
+    )
+    return loader.load()
 
+# --- Chunk documents ---
+def chunk_documents(documents):
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+    return splitter.split_documents(documents)
 
-# --- TASK 4: RETRIEVAL & GENERATION ---
+# --- Vector store ---
+def setup_vectorstore(chunks):
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/gemini-embedding-001",
+        api_key=GOOGLE_API_KEY
+    )
+    vectorstore = Chroma.from_documents(
+        documents=chunks,
+        embedding=embeddings,
+        persist_directory="./chroma_db"
+    )
+    return vectorstore
+
+# --- Main ---
+raw_docs = load_documents(DOCS_DIR)
+doc_chunks = chunk_documents(raw_docs)
+vectorstore = setup_vectorstore(doc_chunks)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
 def ask_question(question: str):
-    """
-    The main RAG pipeline function. Takes a user question, retrieves relevant context, 
-    and generates an answer using an LLM.
-    
-    CRITICAL: This function must return a tuple of (answer, source_documents) for 
-    the RAGAS evaluation script to work properly.
-    
-    Args:
-        question (str): The user's question.
-        
-    Returns:
-        tuple: (answer (str), docs (List[Document]))
-            - answer: The generated text response.
-            - docs: The list of Document objects retrieved from the vector store and used as context.
-    """
-    # TODO: 1. Use the vectorstore to retrieve relevant documents based on the question.
-    # TODO: 2. Pass the retrieved documents and the question to an LLM to generate an answer.
-    
-    answer = "This is a placeholder answer. Implement your LLM generation here."
-    docs = [] # Replace with your actual retrieved Document objects
-    
-    return answer, docs
+    llm = ChatGoogleGenerativeAI(
+        model="models/gemini-2.5-flash",
+        temperature=0.3,
+        api_key=GOOGLE_API_KEY
+    )
 
-# --- OPTIONAL: CHAT INTERFACE ---
+    # ✅ Correct way to get documents
+    docs = retriever.get_relevant_documents(question)
+    context = "\n\n".join([doc.page_content for doc in docs]) if docs else "No context"
+
+    prompt = ChatPromptTemplate.from_template(
+        """Answer the question based only on the context below.
+
+Context:
+{context}
+
+Question:
+{question}"""
+    )
+
+    chain = (
+        {"context": lambda x: context, "question": RunnablePassthrough()}
+        | prompt
+        | llm
+    )
+
+    response = chain.invoke(question)
+    return response.content, docs
+
 if __name__ == "__main__":
-    print("Welcome to the Binary Bridge RAG System!")
+    print("🤖 Binary Bridge RAG Ready!")
     while True:
-        user_input = input("\nAsk a question about PMKVY (or type 'exit' to quit): ")
-        if user_input.lower() in ['exit', 'quit']:
+        user_input = input("\nAsk a question (or 'exit'): ")
+        if user_input.lower() in ["exit", "quit"]:
             break
-            
-        # Call the pipeline
-        response, sources = ask_question(user_input)
-        
-        print(f"\nAnswer: {response}")
-        print("\nSources used:")
+        answer, sources = ask_question(user_input)
+        print(f"\n📝 Answer: {answer}")
+        print("📚 Sources used:")
         for doc in sources:
-             print(f"- {doc.metadata.get('source', 'Unknown source')}")
+            print(f"- {doc.metadata.get('source', 'Unknown')}")

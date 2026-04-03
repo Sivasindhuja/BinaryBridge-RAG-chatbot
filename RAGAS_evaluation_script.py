@@ -34,7 +34,7 @@ def main():
 
     # Initialize Evaluation Models (The "Judges")
     # Make sure you have GEMINI_API_KEY in your .env file
-    eval_llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash") 
+    eval_llm = ChatGoogleGenerativeAI(model="models/gemini-2.5-flash") 
     eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
     ragas_llm = LangchainLLMWrapper(eval_llm)
@@ -57,7 +57,7 @@ def main():
     
     # We use a subset (e.g., first 5) to save time/API quota during testing. 
     # Remove `.head(5)` to run the full dataset.
-    for i, row in df.head(68).iterrows():
+    for i, row in df.head(3).iterrows():
         question = row["question"]
         ground_truth = row["answer"] # The 'correct' answer from the CSV
         

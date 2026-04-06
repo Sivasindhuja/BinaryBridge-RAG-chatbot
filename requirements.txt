@@ -1,0 +1,18 @@
+# RAG pipeline + RAGAS evaluation (pip install -r requirements.txt)
+# On Windows with Python 3.14+, if pip install ragas fails on scikit-network,
+# install Microsoft C++ Build Tools, or use Python 3.11–3.12 where wheels exist.
+
+ragas>=0.4.0
+langchain-community>=0.4.0
+langchain-openai>=1.0.0
+datasets>=2.14.0
+pandas>=2.0.0
+python-dotenv>=1.0.0
+langchain-google-genai>=2.0.0
+langchain-huggingface>=0.1.0
+sentence-transformers>=2.2.0
+numpy>=1.21.0
+chromadb>=0.4.0
+openai>=1.0.0
+huggingface-hub>=0.20.0
+google-genai>=0.3.0

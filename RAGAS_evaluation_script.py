@@ -20,7 +20,7 @@ from ragas.embeddings import LangchainEmbeddingsWrapper
 from ragas.run_config import RunConfig
 
 # LangChain Model Imports for Evaluation
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_huggingface import HuggingFaceEmbeddings
 
 def main():
@@ -33,13 +33,19 @@ def main():
         student_name = "Student"
 
     # Initialize Evaluation Models (The "Judges")
-    # Make sure you have GEMINI_API_KEY in your .env file
-    eval_llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash") 
+    # Make sure you have GROQ_API_KEY in your .env file
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    eval_llm = ChatOpenAI(
+        model="llama-3.3-70b-versatile", 
+        max_retries=20,
+        api_key=groq_key,
+        base_url="https://api.groq.com/openai/v1"
+    )
     eval_embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
     ragas_llm = LangchainLLMWrapper(eval_llm)
     ragas_emb = LangchainEmbeddingsWrapper(eval_embeddings)
-    run_config = RunConfig(max_workers=1, timeout=180)
+    run_config = RunConfig(max_workers=1, timeout=180, max_retries=15, max_wait=30)
 
     # 2. Load Golden Dataset
     csv_filename = "golden_question_answer_pairs.csv"
@@ -57,7 +63,7 @@ def main():
     
     # We use a subset (e.g., first 5) to save time/API quota during testing. 
     # Remove `.head(5)` to run the full dataset.
-    for i, row in df.head(68).iterrows():
+    for i, row in df.head(5).iterrows():
         question = row["question"]
         ground_truth = row["answer"] # The 'correct' answer from the CSV
         
@@ -77,7 +83,7 @@ def main():
             print(f"  Generated answer for Q{i+1}")
             
             # Minimal sleep to avoid hitting API rate limits
-            time.sleep(3) 
+            time.sleep(5) 
             
         except Exception as e:
             print(f" Failed on Q{i+1}: {e}")
@@ -104,12 +110,23 @@ def main():
     )
 
     # 5. Extract & Calculate Averages
-    results_df = evaluation_results.to_pandas()
+    # results_df = evaluation_results.to_pandas()
     
+    # avg_faithfulness = results_df["faithfulness"].mean()
+    # avg_correctness = results_df["answer_correctness"].mean()
+    # avg_precision = results_df["context_precision_with_reference"].mean()
+    # avg_recall = results_df["context_recall"].mean()
+
+    results_df = evaluation_results.to_pandas()
+
+    print("Columns:", results_df.columns)  # debug
+
     avg_faithfulness = results_df["faithfulness"].mean()
     avg_correctness = results_df["answer_correctness"].mean()
-    avg_precision = results_df["context_precision"].mean()
-    avg_recall = results_df["context_recall"].mean()
+
+    # safer access
+    avg_precision = results_df.filter(like="precision").mean().values[0]
+    avg_recall = results_df.filter(like="recall").mean().values[0]
 
     print("\n---  Evaluation Results ---")
     print(f"Faithfulness:       {avg_faithfulness:.4f}")

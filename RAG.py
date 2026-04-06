@@ -1,9 +1,19 @@
 import os
+import glob
 from dotenv import load_dotenv
-# Hint: Import your necessary LangChain modules here (Text splitters, embeddings, vectorstores, LLMs)
+from langchain_community.document_loaders import TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain_openai import ChatOpenAI
+from langchain_huggingface import HuggingFaceEmbeddings
 
 # Load environment variables (API Keys)
 load_dotenv()
+
+# LangChain uses OPENAI_API_KEY for ChatOpenAI by default, we'll set base_url
+groq_key = os.environ.get("GROQ_API_KEY", "")
+if groq_key:
+    os.environ["OPENAI_API_KEY"] = groq_key
 
 # --- TASK 1: INGESTION ---
 def load_documents(directory_path: str):
@@ -16,8 +26,15 @@ def load_documents(directory_path: str):
     Returns:
         List[Document]: A list of loaded LangChain Document objects.
     """
-    # TODO: Implement document loading logic here
-    pass
+    docs = []
+    files = glob.glob(os.path.join(directory_path, "**", "*.md"), recursive=True)
+    for file_path in files:
+        try:
+            loader = TextLoader(file_path, encoding='utf-8')
+            docs.extend(loader.load())
+        except Exception as e:
+            print(f"Error loading {file_path}: {e}")
+    return docs
 
 
 # --- TASK 2: CHUNKING ---
@@ -32,8 +49,12 @@ def chunk_documents(documents):
     Returns:
         List[Document]: A list of chunked Document objects.
     """
-    # TODO: Implement your text splitting logic here
-    pass
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000, 
+        chunk_overlap=150,
+        separators=["\n\n", "\n", " ", ""]
+    )
+    return text_splitter.split_documents(documents)
 
 
 # --- TASK 3: VECTOR DATABASE ---
@@ -47,8 +68,9 @@ def setup_vectorstore(chunks):
     Returns:
         VectorStore: An initialized vector store (e.g., Chroma, FAISS) acting as your retriever.
     """
-    # TODO: Implement embedding and vector store initialization here
-    pass
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    vectorstore = Chroma.from_documents(chunks, embedding=embeddings)
+    return vectorstore
 
 
 # --- PIPELINE INITIALIZATION ---
@@ -57,9 +79,9 @@ def setup_vectorstore(chunks):
 DOCS_DIR = "Documents"
 
 # Uncomment these lines once you have implemented the functions above!
-# raw_docs = load_documents(DOCS_DIR)
-# doc_chunks = chunk_documents(raw_docs)
-# vectorstore = setup_vectorstore(doc_chunks)
+raw_docs = load_documents(DOCS_DIR)
+doc_chunks = chunk_documents(raw_docs)
+vectorstore = setup_vectorstore(doc_chunks)
 
 
 # --- TASK 4: RETRIEVAL & GENERATION ---
@@ -79,11 +101,30 @@ def ask_question(question: str):
             - answer: The generated text response.
             - docs: The list of Document objects retrieved from the vector store and used as context.
     """
-    # TODO: 1. Use the vectorstore to retrieve relevant documents based on the question.
-    # TODO: 2. Pass the retrieved documents and the question to an LLM to generate an answer.
+    # 1. Use the vectorstore to retrieve relevant documents based on the question.
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    docs = retriever.invoke(question)
     
-    answer = "This is a placeholder answer. Implement your LLM generation here."
-    docs = [] # Replace with your actual retrieved Document objects
+    # 2. Pass the retrieved documents and the question to an LLM to generate an answer.
+    llm = ChatOpenAI(
+        model="llama-3.3-70b-versatile", 
+        temperature=0,
+        base_url="https://api.groq.com/openai/v1"
+    )
+    
+    context = "\n\n".join([doc.page_content for doc in docs])
+    
+    prompt = f"""You are a helpful assistant. Answer the user's question based strictly on the following context.
+    Do not use outside information. If the answer is not contained in the context, say so.
+    
+    Context:
+    {context}
+    
+    Question: {question}
+    """
+    
+    response = llm.invoke(prompt)
+    answer = response.content
     
     return answer, docs
 

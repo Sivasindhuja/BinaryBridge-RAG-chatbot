@@ -1,4 +1,4 @@
-# BinaryBridge — RAG Chatbot for PMKVY Schemes
+# A RAG Chatbot for PMKVY Schemes
 
 > A Retrieval-Augmented Generation (RAG) system that answers questions **grounded** in official PMKVY scheme documents. Built to be accurate, cite sources, and refuse out-of-scope / adversarial prompts.
 
@@ -9,9 +9,9 @@
 
 ---
 
-## 📖 Overview
+## Overview
 
-**BinaryBridge** is a practical RAG implementation over three Government of India skill-development schemes under **Pradhan Mantri Kaushal Vikas Yojana (PMKVY 3.0)**:
+This is a practical RAG implementation over three Government of India skill-development schemes under **Pradhan Mantri Kaushal Vikas Yojana (PMKVY 3.0)**:
 
 | Document | Scheme | Focus |
 |---|---|---|
@@ -29,7 +29,7 @@ It is explicitly designed to **refuse hallucination**: out-of-scope, ungrounded,
 
 ---
 
-## ✨ Features
+##  Features
 
 - **Grounded QA** — Answers only from `Documents/` corpus with source citations
 - **Robust Guardrails** — Handles 69 golden test cases including tricky comparisons, missing-info, and adversarial prompts (`Ignore the documents…`, `Pretend the FAQ says…`)
@@ -39,7 +39,7 @@ It is explicitly designed to **refuse hallucination**: out-of-scope, ungrounded,
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```text
 Documents/*.md
@@ -65,7 +65,7 @@ User Question ──► [ Retriever (top-k) ] ──► [ Prompt + Context + LLM
 
 ---
 
-## 🧰 Tech Stack
+## Tech Stack
 
 - **Framework:** LangChain / LlamaIndex (your choice)
 - **LLM:** `langchain-google-genai` (`gemini-2.0-flash`) or `ChatOpenAI`
@@ -76,7 +76,7 @@ User Question ──► [ Retriever (top-k) ] ──► [ Prompt + Context + LLM
 
 ---
 
-## 📁 Project Structure
+##  Project Structure
 
 ```text
 .
@@ -94,7 +94,7 @@ User Question ──► [ Retriever (top-k) ] ──► [ Prompt + Context + LLM
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### 1. Prerequisites
 
@@ -175,7 +175,7 @@ print([s.metadata for s in sources])
 
 ---
 
-## 📊 Evaluation
+##  Evaluation
 
 Run the RAGAS harness against the 69 golden Q/A pairs:
 
@@ -215,7 +215,7 @@ Context Recall:     0.9015
 
 ---
 
-## 🧪 Chunking Experiments
+##  Chunking Experiments
 
 | Strategy | chunk_size | overlap | Observation |
 |---|---|---|---|
@@ -227,7 +227,7 @@ Document your choice and impact in the `Student Summary` section of the evaluati
 
 ---
 
-## 🤝 Contributing
+##  Contributing
 
 1. Create your personal branch (`git checkout -b First-Last`)
 2. Commit `RAG.py` + `evaluation_report_<name>.md`
@@ -236,13 +236,13 @@ Document your choice and impact in the `Student Summary` section of the evaluati
 
 ---
 
-## 📄 License
+##  License
 
 MIT — see `LICENSE` for details. PMKVY scheme documents remain property of MSDE / Government of India and are included here for educational use.
 
 ---
 
-## 🙏 Acknowledgments
+##  Acknowledgments
 
 - Ministry of Skill Development & Entrepreneurship (MSDE) / NSDC for PMKVY scheme docs
 - LangChain, RAGAS, and HuggingFace `sentence-transformers` communities

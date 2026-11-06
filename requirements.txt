@@ -1,0 +1,51 @@
+# ---------------------------------------------------------------------------
+# BinaryBridge – mandatory framework dependencies
+# ---------------------------------------------------------------------------
+# Python 3.10–3.12 is recommended: the pinned evaluation stack predates some
+# Python 3.13+ wheels for its transitive dependencies.
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# These packages are needed by the shared starter template and by the RAGAS
+# evaluation harness. Student-selected RAG stacks (vector databases, extra LLM
+# providers, rerankers, etc.) are intentionally NOT installed here. Add only
+# the packages your own implementation uses.
+
+# --- Starter template -------------------------------------------------------
+python-dotenv==1.0.1
+
+# --- RAGAS evaluation harness ----------------------------------------------
+# ragas is pinned because the harness uses its LangChain wrapper/metric API.
+ragas==0.2.5
+datasets==2.21.0
+pandas==2.2.3
+numpy>=1.26,<2
+# Pinned for compatibility with the LangChain 0.3.x / ragas 0.2.5 stack.
+pydantic==2.9.2
+
+# --- LangChain models used by the evaluation harness -----------------------
+# Gemini is the judge LLM; HuggingFace MiniLM provides judge embeddings.
+langchain==0.3.7
+langchain-community==0.3.7
+langchain-core==0.3.21
+langchain-openai==0.2.8
+langchain-google-genai==2.0.1
+langchain-huggingface==0.1.2
+langchain-text-splitters==0.3.2
+sentence-transformers==3.3.1
+
+# ---------------------------------------------------------------------------
+# Optional student-selected dependencies (examples only — uncomment as needed)
+# ---------------------------------------------------------------------------
+# The framework does not require any particular RAG technology. For example:
+#
+# chromadb==0.5.23
+# faiss-cpu==1.8.0
+# langchain-chroma==0.1.4
+# langchain-groq==0.2.1
+# openai==1.54.4
+# llama-index==0.11.23
+#
+# Optional offline harness tests (no API calls):
+# pytest==8.3.2
